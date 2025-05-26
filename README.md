@@ -31,7 +31,7 @@
 
 ### **Option 1: Local Run (Easy Mode)**  
 ```bash
-git clone https://github.com/yourusername/personal-finance-and-stock-manager.git
+git clone https://github.com/yourusername/Stocksense-AI-personal-finance-stock-assistant.git
 cd StockSense-AI
 pip install -r requirements.txt
 streamlit run app.py
@@ -41,14 +41,14 @@ streamlit run app.py
 [![Deploy on Streamlit Cloud](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://streamlit.io/cloud)  
 
 ```bash
-docker build -t personal-finance-and-stock-manager .
-docker run -p 8501:8501 personal-finance-and-stock-manager
+docker build -t Stocksense-AI-personal-finance-stock-assistant
+docker run -p 8501:8501 Stocksense-AI-personal-finance-stock-assistant
 ```
 
 ## 🎯 **Key Features**  
 
 ### **1. Intelligent Forecasting**  
-- RMSE ≤ 9.7 (90%+ accuracy on S&P 500 stocks)  
+- RMSE ≤ 9.7 (90%+ accuracy on S&P 500 stocks) - power of unity of algorithms
 - Auto-updates models weekly  
 
 ### **2. Portfolio Insights**  
