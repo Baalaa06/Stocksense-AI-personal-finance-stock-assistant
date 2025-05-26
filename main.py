@@ -1,3 +1,4 @@
+from sklearn.linear_model import LinearRegression
 import streamlit as st
 import yfinance as yf
 import pandas as pd
@@ -25,16 +26,18 @@ st.set_page_config(page_title="Finance Manager", layout="centered")
 # Load environment variables
 load_dotenv()
 
+# Set random seeds for reproducibility
 np.random.seed(42)
 tf.random.set_seed(42)
 
+# ======== CSS Styling ========
 def load_css():
     st.markdown("""
     <style>
     .stApp {
         background-color: black;
         font-family: 'Arial', sans-serif;
-        background-image: url('https://i.pinimg.com/originals/74/a7/2a/74a72a774e21d0c5904e31e6a6aae9d2.jpg');
+        background-color: gray;
     }
     .auth-container {
         background: white;
@@ -93,6 +96,7 @@ def load_css():
     </style>
     """, unsafe_allow_html=True)
 
+# ======== Database Connection ========
 def create_db_connection():
     try:
         connection = mysql.connector.connect(
@@ -106,6 +110,7 @@ def create_db_connection():
         st.error(f"Database connection error: {e}")
         return None
 
+# ======== Authentication ========
 def make_hashes(password):
     return hashlib.sha256(str.encode(password)).hexdigest()
 
@@ -150,6 +155,7 @@ def login_user(username, password):
 def check_hashes(password, hashed_text):
     return make_hashes(password) == hashed_text
 
+# ======== Transaction Functions ========
 def add_transaction(username, trans_type, category, amount, date, description):
     conn = create_db_connection()
     if conn:
@@ -190,6 +196,8 @@ def get_transactions(username):
         finally:
             if conn.is_connected():
                 conn.close()
+
+# ======== Stock Analysis Functions ========
 def fetch_stock_data(ticker, start_date=None, end_date=None, max_retries=3):
     """Fetch historical stock data from Yahoo Finance with retry logic"""
     if start_date is None:
@@ -218,6 +226,7 @@ def fetch_stock_data(ticker, start_date=None, end_date=None, max_retries=3):
                 return None
 
 def prepare_data(data, seq_length):
+    """Create sequences for LSTM training"""
     X, y = [], []
     for i in range(len(data) - seq_length):
         X.append(data[i:i+seq_length])
@@ -225,6 +234,7 @@ def prepare_data(data, seq_length):
     return np.array(X), np.array(y)
 
 def build_lstm_model(input_shape):
+    """Build and compile LSTM model"""
     model = Sequential([
         LSTM(100, return_sequences=True, input_shape=input_shape),
         Dropout(0.3),
@@ -237,6 +247,7 @@ def build_lstm_model(input_shape):
     return model
 
 def evaluate_model(model, X_test, y_test, scaler):
+    """Evaluate model performance"""
     predictions = model.predict(X_test)
     predictions = scaler.inverse_transform(predictions)
     y_test = scaler.inverse_transform(y_test.reshape(-1, 1))
@@ -244,6 +255,7 @@ def evaluate_model(model, X_test, y_test, scaler):
     return predictions, rmse
 
 def analyze_stock(ticker, start_date, end_date, seq_length=30, epochs=50, daystopredict=30):
+    """Complete stock analysis pipeline with improved data handling and logs"""
     logs = []
     
     def log(message):
@@ -298,6 +310,8 @@ def analyze_stock(ticker, start_date, end_date, seq_length=30, epochs=50, daysto
         log(f"Evaluation completed, RMSE: {rmse}")
 
         test_dates = prices.index[split + seq_length:]
+
+        # Predict future prices
         last_n_days = scaled_data[-seq_length:]
         last_n_days = last_n_days.reshape(1, seq_length, 1)
 
@@ -343,6 +357,7 @@ def analyze_stock(ticker, start_date, end_date, seq_length=30, epochs=50, daysto
         return None, logs
 
 def plot_results(result):
+    """Plot the analysis results for a stock"""
     if result is None:
         return
 
@@ -372,6 +387,54 @@ def plot_results(result):
     plt.grid(True)
     st.pyplot(plt)
 
+def predict_stockk(ticker, seq_length=30):
+    """Predict the next-day stock price using Linear Regression with normalized structure."""
+    logs = []
+
+    def log(message):
+        logs.append(message)
+        print(message)
+
+    try:
+        prices = fetch_stock_data(ticker)
+
+        if prices is None or len(prices) < seq_length * 2:
+            log(f"Not enough data for {ticker}. Need at least {seq_length * 2} data points.")
+            return None, logs, None
+
+        # Scale prices
+        scaler = MinMaxScaler()
+        scaled_prices = scaler.fit_transform(prices.values.reshape(-1, 1)).flatten()
+
+        # Create sequences
+        X, y = [], []
+        for i in range(len(scaled_prices) - seq_length):
+            X.append(scaled_prices[i:i + seq_length])
+            y.append(scaled_prices[i + seq_length])
+
+        X, y = np.array(X), np.array(y)
+
+        # Train/test split (not shuffled to preserve time series order)
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
+
+        # Train Linear Regression model
+        model = LinearRegression()
+        model.fit(X_train, y_train)
+
+        # Predict next day's price
+        last_seq = scaled_prices[-seq_length:]
+        next_pred_scaled = model.predict([last_seq])[0]
+        next_pred = scaler.inverse_transform([[next_pred_scaled]])[0][0]
+
+        log(f"Predicted next-day price for {ticker}: ${next_pred:.2f}")
+
+        return next_pred, logs, prices
+
+    except Exception as e:
+        log(f"Error predicting {ticker}: {str(e)}")
+        return None, logs, None
+    
+# Function to predict stock price using RandomForest
 def predict_stock_sklearn(ticker, seq_length=30):
     logs = []
 
@@ -404,8 +467,9 @@ def predict_stock_sklearn(ticker, seq_length=30):
 
     return next_pred, logs, prices
 
+# ======== Page Functions ========
 def login_page():
-    st.markdown("<div class='auth-container'>", unsafe_allow_html=True)
+    #st.markdown("<div class='auth-container'>", unsafe_allow_html=True)
     st.title("💰 Finance Manager Login")
     with st.form("login_form"):
         username = st.text_input("Username")
@@ -424,7 +488,7 @@ def login_page():
     st.markdown("</div>", unsafe_allow_html=True)
 
 def signup_page():
-    st.markdown("<div class='auth-container'>", unsafe_allow_html=True)
+    #st.markdown("<div class='auth-container'>", unsafe_allow_html=True)
     st.title("📝 Create Account")
     with st.form("signup_form"):
         new_username = st.text_input("Username")
@@ -443,8 +507,7 @@ def signup_page():
     st.markdown("</div>", unsafe_allow_html=True)
 
 def stock_prediction_page():
-    st.title("📈 Stock Market Predictor")
-    
+    st.title("📈 Stock Market Predictor") 
     menu = ["LSTM Prediction", "Random Forest Prediction", "Stock Suggestions"]
     choice = st.sidebar.selectbox("Prediction Method", menu)
     
@@ -458,7 +521,6 @@ def stock_prediction_page():
         
         end_date = datetime.now().strftime('%Y-%m-%d')
         start_date = (datetime.now() - timedelta(days=2 * 365)).strftime('%Y-%m-%d')
-        
         if st.button("Generate LSTM Prediction"):
             with st.spinner("Analyzing stock data with LSTM..."):
                 result, logs = analyze_stock(ticker, start_date, end_date, epochs=30, daystopredict=days_to_predict)
@@ -468,8 +530,7 @@ def stock_prediction_page():
                     plot_results(result)
                     
                     if isinstance(result['predicted_prices'], pd.Series):
-                        predicted_prices = result['predicted_prices'].to_list()  # Convert Series to list
-
+                        predicted_prices = result['predicted_prices'].to_list()
                     else:
                         predicted_prices = result['predicted_prices']  
 
@@ -534,10 +595,159 @@ def stock_prediction_page():
     
     elif choice == "Stock Suggestions":
         st.markdown("<div class='stock-prediction-card'>", unsafe_allow_html=True)
-        st.subheader("💡 Investment Suggestions")
-
-        st.markdown("Here are a few trending ideas based on market sentiment:")
-
+    
+    # Add investment goal input at the top
+        with st.expander("🎯 Set Your Monthly Investment Goal", expanded=True):
+                    monthly_goal = st.number_input(
+                        "Enter your expected monthly gain target ($):", 
+                min_value=100, 
+                max_value=100000, 
+                value=1000,
+                step=100
+            )
+        investment_amount = st.number_input(
+                "Enter your planned investment amount ($):",
+                min_value=100,
+                value=5000,
+                step=100
+            )
+        
+        st.subheader(f"💡 Investment Suggestions for ${monthly_goal}/month Goal")
+        
+        # Calculate required monthly return percentage
+        if investment_amount > 0:
+            required_return = (monthly_goal / investment_amount) * 100
+            st.info(f"To reach your goal, you'll need approximately **{required_return:.1f}% monthly return** on ${investment_amount}")
+        
+        # Predefined list of stocks to analyze for suggestions
+        suggested_tickers = [
+            'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 
+            'TSLA', 'META','NFLX','AMD'
+        ]
+        
+        if st.button("Generate Personalized Suggestions"):
+            with st.spinner("Analyzing stocks to meet your goal..."):
+                progress_bar = st.progress(0)
+                total_stocks = len(suggested_tickers)
+                
+                results = []
+                for i, ticker in enumerate(suggested_tickers):
+                    try:
+                        progress_bar.progress((i + 1) / total_stocks)
+                        
+                        # Get prediction data
+                        prediction, logs, prices = predict_stockk(ticker)
+                        
+                        # Skip if we didn't get valid data
+                        if prices is None or len(prices) == 0:
+                            continue
+                        
+                        # Get the last price (ensure it's a scalar value)
+                        current_price = float(prices.iloc[-1]) if len(prices) > 0 else None
+                        if current_price is None or np.isnan(current_price):
+                            continue
+                        
+                        shares_possible = int(investment_amount // current_price)
+                        
+                        # Calculate returns - ensure we have enough data
+                        if len(prices) < 30:
+                            continue
+                            
+                        price_changes = prices.pct_change().dropna()
+                        if len(price_changes) < 1:
+                            continue
+                        
+                        # Calculate returns (convert to float to avoid Series)
+                        last_month_return = float(price_changes[-30:].mean()) * 30
+                        annualized_return = float(price_changes.mean()) * 365
+                        
+                        # Calculate potential gain
+                        potential_gain = float(investment_amount * last_month_return)
+                        
+                        results.append({
+                            'Ticker': ticker,
+                            'Current Price': current_price,
+                            'Shares Possible': shares_possible,
+                            '30-Day Avg Return (%)': last_month_return * 100,
+                            'Annualized Return (%)': annualized_return * 100,
+                            'Potential Monthly Gain': potential_gain,
+                            'Goal Match': abs(potential_gain - monthly_goal)
+                        })
+                        
+                    except Exception as e:
+                        st.warning(f"Couldn't analyze {ticker}: {str(e)}")
+                        continue
+                
+                # Process and display results
+                if results:
+                    results_df = pd.DataFrame(results)
+                    
+                    # Convert to numeric and handle potential conversion errors
+                    numeric_cols = ['Current Price', '30-Day Avg Return (%)', 
+                                'Annualized Return (%)', 'Potential Monthly Gain', 'Goal Match']
+                    results_df[numeric_cols] = results_df[numeric_cols].apply(pd.to_numeric, errors='coerce')
+                    results_df = results_df.dropna(subset=numeric_cols)
+                    
+                    if not results_df.empty:
+                        # Sort by how close they are to meeting the goal
+                        results_df = results_df.sort_values('Goal Match')
+                        
+                        # Display top recommendations
+                        st.subheader("🔥 Top Recommendations")
+                        top_picks = results_df.head(5)
+                        
+                        for _, row in top_picks.iterrows():
+                            with st.container():
+                                cols = st.columns([1, 3])
+                                with cols[0]:
+                                    st.metric(
+                                        label=row['Ticker'],
+                                        value=f"${row['Current Price']:.2f}",
+                                        delta=f"{row['30-Day Avg Return (%)']:.1f}% monthly"
+                                    )
+                                with cols[1]:
+                                    st.write(f"""
+                                    - **Shares Possible**: {int(row['Shares Possible'])}
+                                    - **Projected Monthly Gain**: ${row['Potential Monthly Gain']:.2f}
+                                    - **Annual Return Potential**: {row['Annualized Return (%)']:.1f}%
+                                    """)
+                        
+                        # Show full analysis
+                        st.subheader("📊 Full Analysis")
+                        st.dataframe(
+                            results_df.drop(columns=['Goal Match']).style.format({
+                                'Current Price': '${:.2f}',
+                                '30-Day Avg Return (%)': '{:.1f}%',
+                                'Annualized Return (%)': '{:.1f}%',
+                                'Potential Monthly Gain': '${:.2f}'
+                            }),
+                            use_container_width=True
+                        )
+                        
+                        # Visualize potential gains
+                        st.subheader("📈 Potential Returns Comparison")
+                        fig = px.bar(
+                            results_df,
+                            x='Ticker',
+                            y='Potential Monthly Gain',
+                            color='30-Day Avg Return (%)',
+                            title=f"Projected Monthly Gains (Based on ${investment_amount} Investment)"
+                        )
+                        fig.add_hline(
+                            y=monthly_goal,
+                            line_dash="dash",
+                            line_color="red",
+                            annotation_text="Your Goal",
+                            annotation_position="top left"
+                        )
+                        st.plotly_chart(fig, use_container_width=True)
+                    else:
+                        st.warning("No valid predictions could be made for any stocks.")
+                else:
+                    st.error("Couldn't generate any suggestions. Please try again later.")
+        
+        # General stock suggestions fallback
+        st.markdown("### 💎 General Stock Ideas")
         with st.expander("🔍 High Growth Tech Stocks"):
             st.info("""
             - NVDA (NVIDIA): Leading AI chipmaker.
@@ -558,9 +768,15 @@ def stock_prediction_page():
             - BP: Growth in clean energy + traditional oil.
             """)
 
-        st.warning("📌 Disclaimer: These are not financial recommendations. Please do your own research before investing.")
+        st.warning("""
+        📌 Disclaimer: 
+        - These are not financial recommendations. 
+        - Past performance doesn't guarantee future results.
+        - Always do your own research before investing.
+        """)
         st.markdown("</div>", unsafe_allow_html=True)
 
+# ======== Add this to Transaction Functions section ========
 def delete_transaction(transaction_id):
     conn = create_db_connection()
     if conn:
@@ -580,16 +796,14 @@ def delete_transaction(transaction_id):
 
 def dashboard_page():
     st.sidebar.title(f"Welcome, {st.session_state.username}")
-    menu = ["Dashboard", "Add Transaction", "Delete Transaction","Transaction History", "Stock Predictor"]
+    menu = ["Dashboard", "Add Transaction","Transaction details", "Stock Predictor"]
     choice = st.sidebar.selectbox("Menu", menu)
     
     if choice == "Dashboard":
         show_dashboard()
     elif choice == "Add Transaction":
         add_transaction_page()
-    elif choice=="Delete Transaction":
-        del_transaction()
-    elif choice == "Transaction History":
+    elif choice == "Transaction details":
         transaction_history_page()
     elif choice == "Stock Predictor":
         stock_prediction_page()
@@ -600,9 +814,9 @@ def dashboard_page():
 
 def show_dashboard():
     st.title("📊 Financial Dashboard")
-    goal = st.text_input("Enter your goal:")
-    if goal:
-        st.write(f"Your goal is: {goal}")
+    #goal = st.camera_input("Enter your goal:")
+    #if goal:
+        #st.write(f"Your goal is: {goal}")
     df = get_transactions(st.session_state.username)
     if not df.empty:
         total_income = df[df['type'] == 'income']['amount'].sum()
@@ -651,22 +865,39 @@ def add_transaction_page():
 def transaction_history_page():
     st.title("📜 Transaction History")
     df = get_transactions(st.session_state.username)
+    
     if not df.empty:
         col1, col2 = st.columns(2)
         with col1:
             filter_type = st.selectbox("Filter by type", ["All"] + list(df['type'].unique()))
         with col2:
             filter_category = st.selectbox("Filter by category", ["All"] + list(df['category'].unique()))
+        
         if filter_type != "All":
             df = df[df['type'] == filter_type]
         if filter_category != "All":
             df = df[df['category'] == filter_category]
-        columns_to_drop = ['username'] if 'username' in df.columns else []
-        st.dataframe(df.drop(columns=columns_to_drop).style.format({'amount': '${:,.2f}'}), use_container_width=True)
-        st.download_button(label="Download as CSV", data=df.to_csv(index=False), file_name='transactions.csv', mime='text/csv')
+        for _, row in df.iterrows():
+            cols = st.columns([4, 1])
+            with cols[0]:
+                st.markdown(f"""
+                **{row['type'].title()}**: ${row['amount']:.2f}  
+                *{row['category']}* - {row['date']}  
+                {row['description']}
+                """)
+            with cols[1]:
+                if st.button("🗑️", key=f"delete_{row['id']}"):
+                    if delete_transaction(row['id']):
+                        st.rerun()  # Refresh the page after deletion
+        
+        st.download_button(label="Download as CSV", 
+                          data=df.to_csv(index=False), 
+                          file_name='transactions.csv', 
+                          mime='text/csv')
     else:
         st.info("No transactions found")
 
+# ======== Main App ========
 def main():
     load_css()
     if 'logged_in' not in st.session_state:
